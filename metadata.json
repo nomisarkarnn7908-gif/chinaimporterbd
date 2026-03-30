@@ -1,0 +1,5 @@
+{
+  "name": "SourcingBD - Premium China-to-BD Sourcing Platform",
+  "description": "A robust, colorful, and high-conversion e-commerce sourcing platform focused on the Bangladesh market, integrating 1688/Alibaba product data.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"]
+}

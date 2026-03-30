@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "walletBalance": { "type": "number" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "phoneNumber": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Product information from China sources",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "image": { "type": "string" },
+        "priceRMB": { "type": "number" },
+        "priceBDT": { "type": "number" },
+        "sourceUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "stock": { "type": "number" }
+      },
+      "required": ["id", "title", "priceRMB", "priceBDT", "sourceUrl"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "balanceAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["bkash", "nagad", "bank"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "verified", "failed"] },
+        "orderStatus": { "type": "string", "enum": ["pending", "purchased", "in_china_warehouse", "in_bd_warehouse", "out_for_delivery", "delivered", "cancelled"] },
+        "transactionId": { "type": "string" },
+        "screenshotUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "totalAmount", "orderStatus"]
+    },
+    "WalletTransaction": {
+      "title": "WalletTransaction",
+      "description": "Wallet credit/debit transactions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["credit", "debit"] },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "amount", "type", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Product catalog"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "/wallet_transactions/{transactionId}": {
+      "schema": "WalletTransaction",
+      "description": "Wallet transaction history"
+    }
+  }
+}
