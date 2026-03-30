@@ -28,7 +28,15 @@ export default function App() {
       if (firebaseUser) {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         if (userDoc.exists()) {
-          setUser(userDoc.data() as User);
+          const existingUser = userDoc.data() as User;
+          // Force admin role for the specific email if not already set
+          if (firebaseUser.email === 'nomisarkarnn7908@gmail.com' && existingUser.role !== 'admin') {
+            const updatedUser = { ...existingUser, role: 'admin' as const };
+            await setDoc(doc(db, 'users', firebaseUser.uid), updatedUser);
+            setUser(updatedUser);
+          } else {
+            setUser(existingUser);
+          }
         } else {
           // Create new user profile
           const newUser: User = {
@@ -37,7 +45,8 @@ export default function App() {
             displayName: firebaseUser.displayName || '',
             photoURL: firebaseUser.photoURL || '',
             walletBalance: 0,
-            role: 'user',
+            role: firebaseUser.email === 'nomisarkarnn7908@gmail.com' ? 'admin' : 'user',
+            phoneNumber: '', // Will be updated during registration
           };
           await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
           setUser(newUser);
@@ -64,7 +73,7 @@ export default function App() {
       <div className="min-h-screen bg-gray-50 flex flex-col">
         <Header user={user} />
         <div className="flex flex-1 pt-16">
-          <Sidebar />
+          <Sidebar user={user} />
           <main className="flex-1 p-4 md:p-6 ml-0 md:ml-64 transition-all duration-300">
             <Routes>
               <Route path="/" element={<Home />} />

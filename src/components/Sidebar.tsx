@@ -1,6 +1,7 @@
-import { Home, Grid, Package, Heart, Wallet, Settings, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Home, Package, Heart, Wallet, ShieldCheck, ChevronRight } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { User } from '../types';
 
 const categories = [
   { name: 'Electronics', icon: '📱' },
@@ -18,7 +19,7 @@ const menuItems = [
   { name: 'Wallet', path: '/wallet', icon: Wallet },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ user }: { user: User | null }) {
   const location = useLocation();
 
   return (
@@ -64,15 +65,17 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <div className="mt-auto pt-8">
-          <Link
-            to="/admin"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-orange-50 hover:text-orange-600 transition-all group"
-          >
-            <ShieldCheck size={20} className="text-gray-400 group-hover:text-orange-600" />
-            Admin Panel
-          </Link>
-        </div>
+        {user?.role === 'admin' && (
+          <div className="mt-auto pt-8">
+            <Link
+              to="/admin"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-orange-50 hover:text-orange-600 transition-all group"
+            >
+              <ShieldCheck size={20} className="text-gray-400 group-hover:text-orange-600" />
+              Admin Panel
+            </Link>
+          </div>
+        )}
       </div>
     </aside>
   );
