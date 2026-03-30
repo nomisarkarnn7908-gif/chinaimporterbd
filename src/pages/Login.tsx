@@ -52,6 +52,7 @@ export default function Login() {
           displayName: displayName,
           photoURL: '',
           walletBalance: 0,
+          heldBalance: 0,
           role: email === 'nomisarkarnn7908@gmail.com' ? 'admin' : 'user',
           phoneNumber: phoneNumber,
         };

@@ -4,6 +4,7 @@ export interface User {
   displayName?: string;
   photoURL?: string;
   walletBalance: number;
+  heldBalance: number;
   role: 'admin' | 'user';
   phoneNumber?: string;
 }
@@ -37,10 +38,11 @@ export interface Order {
   balanceAmount: number;
   paymentMethod: 'bkash' | 'nagad' | 'bank';
   paymentStatus: 'pending' | 'verified' | 'failed';
-  orderStatus: 'pending' | 'purchased' | 'in_china_warehouse' | 'in_bd_warehouse' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  orderStatus: 'pending_confirm' | 'confirmed' | 'pending_purchase' | 'purchased' | 'china_warehouse' | 'bd_warehouse' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'stock_out';
   transactionId?: string;
   screenshotUrl?: string;
   createdAt: string;
+  invoiceUrl?: string;
 }
 
 export interface WalletTransaction {
@@ -50,4 +52,18 @@ export interface WalletTransaction {
   type: 'credit' | 'debit';
   description: string;
   timestamp: string;
+}
+
+export interface WithdrawalRequest {
+  id: string;
+  userId: string;
+  amount: number;
+  gatewayCharge: number;
+  netAmount: number;
+  method: 'bkash' | 'nagad' | 'bank';
+  accountNumber: string;
+  status: 'pending' | 'completed' | 'cancelled';
+  transactionId?: string;
+  createdAt: string;
+  processedAt?: string;
 }

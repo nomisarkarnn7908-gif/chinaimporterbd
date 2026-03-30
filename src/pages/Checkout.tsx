@@ -56,7 +56,7 @@ export default function Checkout({ user }: CheckoutProps) {
         balanceAmount: total - amountToPay,
         paymentMethod,
         paymentStatus: 'pending',
-        orderStatus: 'pending',
+        orderStatus: 'pending_confirm',
         transactionId,
         createdAt: new Date().toISOString(),
       };

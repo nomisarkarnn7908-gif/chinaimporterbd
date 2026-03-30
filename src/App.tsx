@@ -45,6 +45,7 @@ export default function App() {
             displayName: firebaseUser.displayName || '',
             photoURL: firebaseUser.photoURL || '',
             walletBalance: 0,
+            heldBalance: 0,
             role: firebaseUser.email === 'nomisarkarnn7908@gmail.com' ? 'admin' : 'user',
             phoneNumber: '', // Will be updated during registration
           };

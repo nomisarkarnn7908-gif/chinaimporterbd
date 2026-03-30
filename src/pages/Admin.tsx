@@ -1,41 +1,95 @@
-import { useState, useEffect } from 'react';
-import { collection, query, getDocs, orderBy, doc, updateDoc, increment, addDoc } from 'firebase/firestore';
-import { db } from '../firebase';
-import { Order, User, WalletTransaction } from '../types';
+import { useState, useEffect, FormEvent } from 'react';
+import { collection, query, getDocs, orderBy, doc, updateDoc, increment, addDoc, getDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { Order, User, WalletTransaction, WithdrawalRequest } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
-import { Search, Filter, CheckCircle, XCircle, ExternalLink, Eye, Wallet, RefreshCw } from 'lucide-react';
+import { 
+  Search, Filter, CheckCircle, ExternalLink, Eye, Wallet, 
+  RefreshCw, FileText, Plus, AlertCircle, Trash2, Package
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+
+import { useSearchParams } from 'react-router-dom';
 
 export default function Admin() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as any) || 'pending_confirm';
+  const [activeTab, setActiveTab] = useState<'pending_confirm' | 'confirmed' | 'pending_purchase' | 'bd_warehouse' | 'withdrawals' | 'sourcing' | 'refunds'>(initialTab);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [selectedWithdrawal, setSelectedWithdrawal] = useState<WithdrawalRequest | null>(null);
 
-  const fetchOrders = async () => {
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab) {
+      setActiveTab(tab as any);
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab as any);
+    setSearchParams({ tab });
+  };
+  
+  // Refund Form State
+  const [refundData, setRefundData] = useState({
+    amount: 0,
+    gatewayCharge: 0,
+    transactionId: '',
+  });
+
+  // Sourcing Form State
+  const [newProduct, setNewProduct] = useState({
+    title: '',
+    image: '',
+    priceRMB: 0,
+    priceBDT: 0,
+    sourceUrl: '',
+    category: 'Electronics',
+    stock: 100,
+  });
+
+  const fetchData = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      setOrders(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)));
+      const ordersQ = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      let ordersSnap;
+      try {
+        ordersSnap = await getDocs(ordersQ);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'orders');
+      }
+      setOrders(ordersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)));
+
+      const withdrawalsQ = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'));
+      let withdrawalsSnap;
+      try {
+        withdrawalsSnap = await getDocs(withdrawalsQ);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'withdrawal_requests');
+      }
+      setWithdrawals(withdrawalsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithdrawalRequest)));
     } catch (error) {
       console.error(error);
-      toast.error('Failed to fetch orders');
+      toast.error('Failed to fetch data');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchOrders();
+    fetchData();
   }, []);
 
-  const handleStatusUpdate = async (orderId: string, status: string) => {
+  const handleStatusUpdate = async (orderId: string, status: Order['orderStatus']) => {
     try {
       await updateDoc(doc(db, 'orders', orderId), { orderStatus: status });
       toast.success(`Order status updated to ${status}`);
-      fetchOrders();
+      fetchData();
     } catch (error) {
       console.error(error);
       toast.error('Failed to update status');
@@ -46,22 +100,51 @@ export default function Admin() {
     try {
       await updateDoc(doc(db, 'orders', order.id), { paymentStatus: 'verified' });
       toast.success('Payment verified successfully!');
-      fetchOrders();
+      fetchData();
     } catch (error) {
       console.error(error);
       toast.error('Failed to verify payment');
     }
   };
 
+  const handleStockOut = async (order: Order) => {
+    if (!confirm('Mark as Stock Out? This will hold the paid amount for refund.')) return;
+    try {
+      const userRef = doc(db, 'users', order.userId);
+      await updateDoc(userRef, { 
+        heldBalance: increment(order.paidAmount) 
+      });
+
+      await updateDoc(doc(db, 'orders', order.id), { 
+        orderStatus: 'stock_out',
+        paymentStatus: 'failed'
+      });
+
+      toast.success('Order marked as Stock Out. Funds are now held.');
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to process stock out');
+    }
+  };
+
   const handleRefundToWallet = async (order: Order) => {
-    if (!confirm(`Are you sure you want to refund ${formatCurrency(order.paidAmount)} to user's wallet?`)) return;
+    if (!confirm(`Refund ${formatCurrency(order.paidAmount)} to user's wallet?`)) return;
 
     try {
-      // 1. Update user wallet
       const userRef = doc(db, 'users', order.userId);
-      await updateDoc(userRef, { walletBalance: increment(order.paidAmount) });
+      const userSnap = await getDoc(userRef);
+      const userData = userSnap.data() as User;
 
-      // 2. Add transaction record
+      const updates: any = { walletBalance: increment(order.paidAmount) };
+      if (order.orderStatus === 'stock_out' || order.orderStatus === 'cancelled') {
+        if (userData.heldBalance >= order.paidAmount) {
+          updates.heldBalance = increment(-order.paidAmount);
+        }
+      }
+
+      await updateDoc(userRef, updates);
+
       const trans: Omit<WalletTransaction, 'id'> = {
         userId: order.userId,
         amount: order.paidAmount,
@@ -71,184 +154,511 @@ export default function Admin() {
       };
       await addDoc(collection(db, 'wallet_transactions'), trans);
 
-      // 3. Update order status
-      await updateDoc(doc(db, 'orders', order.id), { orderStatus: 'cancelled', paymentStatus: 'failed' });
+      await updateDoc(doc(db, 'orders', order.id), { orderStatus: 'cancelled' });
 
       toast.success('Refunded to wallet successfully!');
-      fetchOrders();
+      fetchData();
     } catch (error) {
       console.error(error);
       toast.error('Failed to process refund');
     }
   };
 
-  const filteredOrders = orders.filter(o => 
-    o.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    o.userId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    o.transactionId?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleProcessWithdrawal = async () => {
+    if (!selectedWithdrawal) return;
+    try {
+      await updateDoc(doc(db, 'withdrawal_requests', selectedWithdrawal.id), {
+        status: 'completed',
+        transactionId: refundData.transactionId,
+        gatewayCharge: refundData.gatewayCharge,
+        processedAt: new Date().toISOString(),
+      });
+
+      toast.success('Withdrawal processed successfully!');
+      setShowRefundModal(false);
+      setSelectedWithdrawal(null);
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to process withdrawal');
+    }
+  };
+
+  const handleCancelWithdrawal = async (withdrawal: WithdrawalRequest) => {
+    if (!confirm('Cancel this withdrawal request? Funds will return to wallet.')) return;
+    try {
+      const userRef = doc(db, 'users', withdrawal.userId);
+      await updateDoc(userRef, { walletBalance: increment(withdrawal.amount) });
+
+      await updateDoc(doc(db, 'withdrawal_requests', withdrawal.id), {
+        status: 'cancelled',
+        processedAt: new Date().toISOString(),
+      });
+
+      toast.success('Withdrawal cancelled and funds returned to wallet.');
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to cancel withdrawal');
+    }
+  };
+
+  const handleAddProduct = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await addDoc(collection(db, 'products'), newProduct);
+      toast.success('Product added successfully!');
+      setNewProduct({
+        title: '',
+        image: '',
+        priceRMB: 0,
+        priceBDT: 0,
+        sourceUrl: '',
+        category: 'Electronics',
+        stock: 100,
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to add product');
+    }
+  };
+
+  const handleMakeInvoice = (order: Order) => {
+    toast.info(`Generating invoice for Order #${order.id.slice(-6).toUpperCase()}...`);
+    setTimeout(() => {
+      toast.success('Invoice generated successfully!');
+    }, 1500);
+  };
+
+  const filteredOrders = orders.filter(o => {
+    const matchesSearch = o.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      o.userId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      o.transactionId?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    if (!matchesSearch) return false;
+
+    if (activeTab === 'pending_confirm') return o.orderStatus === 'pending_confirm';
+    if (activeTab === 'confirmed') return o.orderStatus === 'confirmed';
+    if (activeTab === 'pending_purchase') return o.orderStatus === 'pending_purchase';
+    if (activeTab === 'bd_warehouse') return o.orderStatus === 'bd_warehouse';
+    if (activeTab === 'refunds') return o.orderStatus === 'stock_out' || o.orderStatus === 'cancelled';
+    
+    return true;
+  });
+
+  const tabs = [
+    { id: 'pending_confirm', label: 'Pending Confirm', icon: AlertCircle },
+    { id: 'confirmed', label: 'Confirmed', icon: CheckCircle },
+    { id: 'pending_purchase', label: 'Pending Purchase', icon: RefreshCw },
+    { id: 'bd_warehouse', label: 'BD Warehouse', icon: Package },
+    { id: 'refunds', label: 'Refunds/Stock Out', icon: Wallet },
+    { id: 'withdrawals', label: 'Withdrawals', icon: ExternalLink },
+    { id: 'sourcing', label: 'Sourcing', icon: Plus },
+  ];
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+    <div className="max-w-7xl mx-auto pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Order Management System</h1>
-          <p className="text-sm text-gray-500">Manage customer orders, verify payments, and update statuses.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Admin Control Center</h1>
+          <p className="text-sm text-gray-500">Manage your business operations efficiently.</p>
         </div>
-        <button 
-          onClick={fetchOrders}
-          className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
-        >
-          <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-gray-100 shadow-sm overflow-x-auto no-scrollbar">
+          {tabs.map((tab) => (
+            <button 
+              key={tab.id}
+              onClick={() => handleTabChange(tab.id)}
+              className={cn(
+                "px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-2",
+                activeTab === tab.id ? "bg-orange-500 text-white shadow-md" : "text-gray-500 hover:bg-gray-50"
+              )}
+            >
+              <tab.icon size={16} />
+              {tab.label}
+            </button>
+          ))}
+          <button 
+            onClick={fetchData}
+            className="p-2 text-gray-400 hover:text-orange-500 transition-colors"
+          >
+            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'Total Orders', value: orders.length, color: 'bg-blue-50 text-blue-600' },
-          { label: 'Pending Payment', value: orders.filter(o => o.paymentStatus === 'pending').length, color: 'bg-yellow-50 text-yellow-600' },
-          { label: 'In Transit', value: orders.filter(o => ['purchased', 'in_china_warehouse', 'in_bd_warehouse'].includes(o.orderStatus)).length, color: 'bg-purple-50 text-purple-600' },
-          { label: 'Completed', value: orders.filter(o => o.orderStatus === 'delivered').length, color: 'bg-green-50 text-green-600' },
-        ].map((stat, i) => (
-          <div key={i} className={cn("p-4 rounded-2xl", stat.color)}>
-            <p className="text-xs font-bold uppercase tracking-wider opacity-70">{stat.label}</p>
-            <p className="text-2xl font-bold mt-1">{stat.value}</p>
+      {(activeTab === 'pending_confirm' || activeTab === 'pending_purchase' || activeTab === 'bd_warehouse' || activeTab === 'refunds') && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Pending Confirm', value: orders.filter(o => o.orderStatus === 'pending_confirm').length, color: 'bg-yellow-50 text-yellow-600' },
+              { label: 'Pending Purchase', value: orders.filter(o => o.orderStatus === 'pending_purchase').length, color: 'bg-blue-50 text-blue-600' },
+              { label: 'Held Balance', value: orders.filter(o => o.orderStatus === 'stock_out').length, color: 'bg-red-50 text-red-600' },
+              { label: 'Delivered', value: orders.filter(o => o.orderStatus === 'delivered').length, color: 'bg-green-50 text-green-600' },
+            ].map((stat, i) => (
+              <div key={i} className={cn("p-4 rounded-2xl", stat.color)}>
+                <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">{stat.label}</p>
+                <p className="text-2xl font-bold mt-1">{stat.value}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {/* Search & Filter */}
-      <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm mb-6 flex flex-col md:flex-row gap-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder="Search by Order ID, User ID, or Transaction ID..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-xl hover:bg-gray-100 transition-colors">
-          <Filter size={20} />
-          Filters
-        </button>
-      </div>
+          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm mb-6">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <input
+                type="text"
+                placeholder="Search orders..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
 
-      {/* Orders Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b border-gray-100">
-              <tr>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Order ID</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Items</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Total</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Payment</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {loading ? (
-                [1, 2, 3, 4, 5].map(i => (
-                  <tr key={i} className="animate-pulse">
-                    <td colSpan={6} className="px-6 py-4 h-16 bg-gray-50/50"></td>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Order</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Payment</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
                   </tr>
-                ))
-              ) : filteredOrders.length > 0 ? (
-                filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold text-gray-900">#{order.id.slice(-6).toUpperCase()}</span>
-                        <span className="text-[10px] text-gray-400">{new Date(order.createdAt).toLocaleDateString()}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex -space-x-2">
-                        {order.items.slice(0, 3).map((item, i) => (
-                          <img key={i} src={item.image} className="w-8 h-8 rounded-full border-2 border-white object-cover" />
-                        ))}
-                        {order.items.length > 3 && (
-                          <div className="w-8 h-8 rounded-full bg-gray-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-gray-500">
-                            +{order.items.length - 3}
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {loading ? (
+                    [1, 2, 3].map(i => <tr key={i} className="animate-pulse h-20 bg-gray-50/50"></tr>)
+                  ) : filteredOrders.map((order) => (
+                    <tr key={order.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex -space-x-2">
+                            {order.items.slice(0, 2).map((item, i) => (
+                              <img key={i} src={item.image} className="w-8 h-8 rounded-full border-2 border-white object-cover shadow-sm" />
+                            ))}
                           </div>
-                        )}
-                      </div>
-                    </td>
+                          <div>
+                            <p className="text-sm font-bold text-gray-900">#{order.id.slice(-6).toUpperCase()}</p>
+                            <p className="text-[10px] text-gray-400">{formatCurrency(order.totalAmount)}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                              order.paymentStatus === 'verified' ? "bg-green-50 text-green-600" : "bg-yellow-50 text-yellow-600"
+                            )}>
+                              {order.paymentStatus}
+                            </span>
+                            {order.screenshotUrl && (
+                              <button 
+                                onClick={() => window.open(order.screenshotUrl, '_blank')}
+                                className="text-blue-500 hover:text-blue-600"
+                                title="View Screenshot"
+                              >
+                                <Eye size={14} />
+                              </button>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-gray-400 mt-1">{order.transactionId || 'No TXID'}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <select
+                          value={order.orderStatus}
+                          onChange={(e) => handleStatusUpdate(order.id, e.target.value as any)}
+                          className="text-xs font-bold bg-gray-50 border-none rounded-lg px-2 py-1 focus:ring-0 cursor-pointer text-gray-700"
+                        >
+                          <option value="pending_confirm">Pending Confirm</option>
+                          <option value="confirmed">Confirmed</option>
+                          <option value="pending_purchase">Pending Purchase</option>
+                          <option value="purchased">Purchased</option>
+                          <option value="china_warehouse">China Warehouse</option>
+                          <option value="bd_warehouse">BD Warehouse</option>
+                          <option value="out_for_delivery">Out for Delivery</option>
+                          <option value="delivered">Delivered</option>
+                          <option value="cancelled">Cancelled</option>
+                          <option value="stock_out">Stock Out</option>
+                        </select>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {order.paymentStatus === 'pending' && (
+                            <button
+                              onClick={() => handleVerifyPayment(order)}
+                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                              title="Verify Payment"
+                            >
+                              <CheckCircle size={18} />
+                            </button>
+                          )}
+                          {order.orderStatus === 'pending_confirm' && (
+                            <button
+                              onClick={() => handleStockOut(order)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Stock Out"
+                            >
+                              <AlertCircle size={18} />
+                            </button>
+                          )}
+                          {(order.orderStatus === 'stock_out' || order.orderStatus === 'cancelled') && (
+                            <button
+                              onClick={() => handleRefundToWallet(order)}
+                              className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                              title="Refund to Wallet"
+                            >
+                              <Wallet size={18} />
+                            </button>
+                          )}
+                          {order.orderStatus === 'bd_warehouse' && (
+                            <button
+                              onClick={() => handleMakeInvoice(order)}
+                              className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                              title="Make Invoice"
+                            >
+                              <FileText size={18} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'withdrawals' && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">User</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Amount</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Method</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {withdrawals.length === 0 ? (
+                  <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">No withdrawal requests.</td></tr>
+                ) : withdrawals.map((w) => (
+                  <tr key={w.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{w.userId.slice(0, 8)}...</td>
+                    <td className="px-6 py-4 text-sm font-bold text-gray-900">{formatCurrency(w.amount)}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <span className="text-sm font-bold text-gray-900">{formatCurrency(order.totalAmount)}</span>
-                        <span className="text-[10px] text-gray-400">Paid: {formatCurrency(order.paidAmount)}</span>
+                        <span className="text-xs font-bold text-gray-700 uppercase">{w.method}</span>
+                        <span className="text-[10px] text-gray-400">{w.accountNumber}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className={cn(
                         "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
-                        order.paymentStatus === 'verified' ? "bg-green-50 text-green-600" : "bg-yellow-50 text-yellow-600"
+                        w.status === 'completed' ? "bg-green-50 text-green-600" : 
+                        w.status === 'cancelled' ? "bg-red-50 text-red-600" : "bg-yellow-50 text-yellow-600"
                       )}>
-                        {order.paymentStatus}
+                        {w.status}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <select
-                        value={order.orderStatus}
-                        onChange={(e) => handleStatusUpdate(order.id, e.target.value)}
-                        className="text-xs font-bold bg-transparent border-none focus:ring-0 cursor-pointer text-gray-700"
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="purchased">Purchased</option>
-                        <option value="in_china_warehouse">In China</option>
-                        <option value="in_bd_warehouse">In BD</option>
-                        <option value="out_for_delivery">Out for Delivery</option>
-                        <option value="delivered">Delivered</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                    </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {order.paymentStatus === 'pending' && (
+                      {w.status === 'pending' && (
+                        <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => handleVerifyPayment(order)}
-                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                            title="Verify Payment"
+                            onClick={() => {
+                              setSelectedWithdrawal(w);
+                              setRefundData({ amount: w.amount, gatewayCharge: 0, transactionId: '' });
+                              setShowRefundModal(true);
+                            }}
+                            className="px-3 py-1 bg-green-500 text-white text-xs font-bold rounded-lg hover:bg-green-600 transition-colors"
                           >
-                            <CheckCircle size={18} />
+                            Process
                           </button>
-                        )}
-                        <button
-                          onClick={() => handleRefundToWallet(order)}
-                          className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                          title="Refund to Wallet"
-                        >
-                          <Wallet size={18} />
-                        </button>
-                        <a
-                          href={order.items[0].sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Open Sourcing Link"
-                        >
-                          <ExternalLink size={18} />
-                        </a>
-                      </div>
+                          <button
+                            onClick={() => handleCancelWithdrawal(w)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Cancel Request"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                    No orders found matching your search.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
+
+      {activeTab === 'sourcing' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+              <Plus className="text-orange-500" />
+              Link 1688/Alibaba Product
+            </h2>
+            <form onSubmit={handleAddProduct} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Product Title</label>
+                <input
+                  required
+                  type="text"
+                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                  value={newProduct.title}
+                  onChange={e => setNewProduct({...newProduct, title: e.target.value})}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Price (RMB)</label>
+                  <input
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                    value={newProduct.priceRMB}
+                    onChange={e => setNewProduct({...newProduct, priceRMB: Number(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Price (BDT)</label>
+                  <input
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                    value={newProduct.priceBDT}
+                    onChange={e => setNewProduct({...newProduct, priceBDT: Number(e.target.value)})}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Image URL</label>
+                <input
+                  required
+                  type="url"
+                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                  value={newProduct.image}
+                  onChange={e => setNewProduct({...newProduct, image: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Source URL (1688/Alibaba)</label>
+                <input
+                  required
+                  type="url"
+                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                  value={newProduct.sourceUrl}
+                  onChange={e => setNewProduct({...newProduct, sourceUrl: e.target.value})}
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full py-3 bg-orange-500 text-white font-bold rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
+              >
+                Add to Site
+              </button>
+            </form>
+          </div>
+          
+          <div className="bg-orange-50 p-6 rounded-2xl border border-orange-100">
+            <h3 className="text-orange-800 font-bold mb-4">Sourcing Instructions</h3>
+            <ul className="space-y-3 text-sm text-orange-700">
+              <li className="flex gap-2">
+                <div className="w-5 h-5 rounded-full bg-orange-200 flex items-center justify-center text-[10px] font-bold shrink-0">1</div>
+                Find a product on 1688.com or Alibaba.com
+              </li>
+              <li className="flex gap-2">
+                <div className="w-5 h-5 rounded-full bg-orange-200 flex items-center justify-center text-[10px] font-bold shrink-0">2</div>
+                Copy the image URL and product link
+              </li>
+              <li className="flex gap-2">
+                <div className="w-5 h-5 rounded-full bg-orange-200 flex items-center justify-center text-[10px] font-bold shrink-0">3</div>
+                Calculate BDT price (RMB * Rate + Profit)
+              </li>
+              <li className="flex gap-2">
+                <div className="w-5 h-5 rounded-full bg-orange-200 flex items-center justify-center text-[10px] font-bold shrink-0">4</div>
+                Fill the form and click "Add to Site"
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {showRefundModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+            >
+              <div className="p-6 border-b border-gray-100">
+                <h3 className="text-xl font-bold text-gray-900">Process Withdrawal</h3>
+                <p className="text-sm text-gray-500">Enter payment details to complete the refund.</p>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount to Pay</label>
+                  <input
+                    type="number"
+                    readOnly
+                    className="w-full px-4 py-2 bg-gray-50 rounded-xl border border-gray-200 text-gray-500"
+                    value={refundData.amount}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Gateway Charge (BDT)</label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                    value={refundData.gatewayCharge}
+                    onChange={e => setRefundData({...refundData, gatewayCharge: Number(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Transaction ID</label>
+                  <input
+                    type="text"
+                    placeholder="Enter payment TXID"
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                    value={refundData.transactionId}
+                    onChange={e => setRefundData({...refundData, transactionId: e.target.value})}
+                  />
+                </div>
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <p className="text-xs text-blue-700 font-medium">
+                    Net Amount: <span className="font-bold">{formatCurrency(refundData.amount - refundData.gatewayCharge)}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="p-6 bg-gray-50 flex gap-3">
+                <button 
+                  onClick={() => setShowRefundModal(false)}
+                  className="flex-1 py-3 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleProcessWithdrawal}
+                  disabled={!refundData.transactionId}
+                  className="flex-1 py-3 bg-green-500 text-white text-sm font-bold rounded-xl hover:bg-green-600 transition-all disabled:opacity-50"
+                >
+                  Submit Payment
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

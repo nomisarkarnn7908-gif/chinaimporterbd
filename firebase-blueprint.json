@@ -82,6 +82,10 @@
     "/wallet_transactions/{transactionId}": {
       "schema": "WalletTransaction",
       "description": "Wallet transaction history"
+    },
+    "/withdrawal_requests/{requestId}": {
+      "schema": "WithdrawalRequest",
+      "description": "User withdrawal requests"
     }
   }
 }
