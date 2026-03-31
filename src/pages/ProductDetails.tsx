@@ -1,29 +1,46 @@
 import { useParams, Link } from 'react-router-dom';
 import { ShoppingCart, ExternalLink, ShieldCheck, Truck, Clock, Heart, Share2, Info } from 'lucide-react';
-import { formatCurrency, convertRMBtoBDT, cn } from '../lib/utils';
-import { useState } from 'react';
+import { formatCurrency, cn } from '../lib/utils';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-
-const mockProduct = {
-  id: '1',
-  title: 'Xiaomi Smart Band 8 Global Version 1.62" AMOLED Screen 60Hz Blood Oxygen Fitness Tracker',
-  image: 'https://picsum.photos/seed/xiaomi/800/800',
-  priceRMB: 189,
-  priceBDT: convertRMBtoBDT(189),
-  sourceUrl: 'https://1688.com/product/1',
-  category: 'Electronics',
-  stock: 100,
-  description: 'The Xiaomi Smart Band 8 features a 1.62" AMOLED display with a 60Hz refresh rate for smooth interactions. It supports over 150 sports modes and provides comprehensive health monitoring including heart rate, SpO2, and sleep tracking. With up to 16 days of battery life and 5ATM water resistance, it is the perfect fitness companion.',
-};
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import { Product } from '../types';
 
 export default function ProductDetails() {
   const { id } = useParams();
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
+
+  useEffect(() => {
+    const fetchProduct = async () => {
+      if (!id) return;
+      try {
+        const docRef = doc(db, 'products', id);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setProduct({ id: docSnap.id, ...docSnap.data() } as Product);
+        } else {
+          toast.error('Product not found');
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error('Failed to fetch product');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProduct();
+  }, [id]);
 
   const handleAddToCart = () => {
     toast.success('Added to cart!');
   };
+
+  if (loading) return <div className="text-center py-20">Loading...</div>;
+  if (!product) return <div className="text-center py-20">Product not found</div>;
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -36,8 +53,8 @@ export default function ProductDetails() {
             className="aspect-square rounded-3xl overflow-hidden border border-gray-100 shadow-lg sticky top-24"
           >
             <img
-              src={mockProduct.image}
-              alt={mockProduct.title}
+              src={product.image}
+              alt={product.title}
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
             />
@@ -49,24 +66,24 @@ export default function ProductDetails() {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="px-2 py-1 bg-orange-100 text-orange-600 text-[10px] font-bold rounded-full uppercase tracking-wider">
-                {mockProduct.category}
+                {product.category}
               </span>
               <span className="text-xs text-gray-400 flex items-center gap-1">
-                <Clock size={12} /> Updated 2 hours ago
+                <Clock size={12} /> Updated just now
               </span>
             </div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900 leading-tight">
-              {mockProduct.title}
+              {product.title}
             </h1>
           </div>
 
           <div className="flex items-end gap-4">
             <div className="flex flex-col">
               <span className="text-3xl font-bold text-orange-600">
-                {formatCurrency(mockProduct.priceBDT)}
+                {formatCurrency(product.priceBDT)}
               </span>
               <span className="text-sm text-gray-400">
-                ≈ ¥{mockProduct.priceRMB} RMB (Exchange Rate: 1 RMB = 15 BDT)
+                ≈ ¥{product.priceRMB} RMB
               </span>
             </div>
             <div className="mb-1 px-3 py-1 bg-green-50 text-green-600 text-xs font-bold rounded-lg border border-green-100">
@@ -113,7 +130,7 @@ export default function ProductDetails() {
 
           <div className="grid grid-cols-2 gap-4 pt-6">
             <a
-              href={mockProduct.sourceUrl}
+              href={product.sourceUrl}
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-center gap-2 p-3 bg-gray-50 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-100 transition-all border border-gray-200"
@@ -144,7 +161,7 @@ export default function ProductDetails() {
       <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mb-12">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Product Description</h2>
         <p className="text-gray-600 leading-relaxed whitespace-pre-line">
-          {mockProduct.description}
+          {product.description}
         </p>
       </div>
     </div>

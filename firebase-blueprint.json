@@ -64,6 +64,17 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "amount", "type", "timestamp"]
+    },
+    "PageContent": {
+      "title": "PageContent",
+      "description": "Content for static pages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" }
+      },
+      "required": ["id", "title", "content"]
     }
   },
   "firestore": {
@@ -86,6 +97,10 @@
     "/withdrawal_requests/{requestId}": {
       "schema": "WithdrawalRequest",
       "description": "User withdrawal requests"
+    },
+    "/page_content/{pageId}": {
+      "schema": "PageContent",
+      "description": "Page content"
     }
   }
 }

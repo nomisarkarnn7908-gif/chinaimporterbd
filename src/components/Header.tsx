@@ -35,9 +35,20 @@ export default function Header({ user }: HeaderProps) {
               className="w-full h-10 pl-4 pr-12 rounded-full border border-gray-300 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
             />
             <div className="absolute right-2 flex items-center gap-2">
-              <button className="p-1.5 text-gray-400 hover:text-orange-600 transition-colors">
+              <input 
+                type="file" 
+                id="imageSearch" 
+                className="hidden" 
+                accept="image/*"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    alert('Image search functionality is under development!');
+                  }
+                }}
+              />
+              <label htmlFor="imageSearch" className="p-1.5 text-gray-400 hover:text-orange-600 transition-colors cursor-pointer">
                 <ImageIcon size={20} />
-              </button>
+              </label>
               <button className="p-1.5 bg-orange-600 text-white rounded-full hover:bg-orange-700 transition-colors">
                 <Search size={18} />
               </button>
@@ -54,6 +65,11 @@ export default function Header({ user }: HeaderProps) {
 
           {user ? (
             <div className="flex items-center gap-3">
+              {user.role === 'admin' && (
+                <Link to="/admin" className="text-sm font-bold text-orange-600 hover:text-orange-700 transition-colors">
+                  Admin
+                </Link>
+              )}
               <Link to="/dashboard" className="flex items-center gap-2 group">
                 <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden border border-gray-300 group-hover:border-orange-500 transition-all">
                   {user.photoURL ? (

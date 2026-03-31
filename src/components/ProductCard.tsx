@@ -1,15 +1,33 @@
 import React from 'react';
-import { ShoppingCart, ExternalLink, Heart } from 'lucide-react';
+import { ShoppingCart, ExternalLink, Heart, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Product } from '../types';
+import { Product, User } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { motion } from 'framer-motion';
+import { deleteDoc, doc } from 'firebase/firestore';
+import { db } from '../firebase';
+import { toast } from 'sonner';
 
 interface ProductCardProps {
   product: Product;
+  user: User | null;
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
+const ProductCard: React.FC<ProductCardProps> = ({ product, user }) => {
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this product?')) return;
+    try {
+      await deleteDoc(doc(db, 'products', product.id));
+      toast.success('Product deleted successfully!');
+      window.location.reload();
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to delete product');
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -28,6 +46,14 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           <button className="p-2 bg-white/80 backdrop-blur-md rounded-full text-gray-400 hover:text-red-500 transition-colors shadow-sm">
             <Heart size={18} />
           </button>
+          {user?.role === 'admin' && (
+            <div 
+              onClick={handleDelete}
+              className="p-2 bg-white/80 backdrop-blur-md rounded-full text-gray-400 hover:text-red-600 transition-colors shadow-sm relative z-10 cursor-pointer"
+            >
+              <Trash2 size={18} />
+            </div>
+          )}
         </div>
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
           <span className="text-white text-xs font-medium flex items-center gap-1">
@@ -41,6 +67,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           <h3 className="text-sm font-semibold text-gray-800 line-clamp-2 hover:text-orange-600 transition-colors">
             {product.title}
           </h3>
+          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{product.description}</p>
         </Link>
         
         <div className="flex items-center justify-between mt-4">

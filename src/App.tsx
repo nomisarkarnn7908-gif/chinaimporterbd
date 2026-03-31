@@ -13,11 +13,14 @@ import Cart from './pages/Cart';
 import Checkout from './pages/Checkout';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
+import EditPageContent from './pages/EditPageContent';
 import Login from './pages/Login';
 
 // Components
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+import Footer from './components/Footer';
+import AdminLayout from './layouts/AdminLayout';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -71,24 +74,34 @@ export default function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50 flex flex-col">
-        <Header user={user} />
-        <div className="flex flex-1 pt-16">
-          <Sidebar user={user} />
-          <main className="flex-1 p-4 md:p-6 ml-0 md:ml-64 transition-all duration-300">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/product/:id" element={<ProductDetails />} />
-              <Route path="/cart" element={<Cart />} />
-              <Route path="/checkout" element={<Checkout user={user} />} />
-              <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} />
-              <Route path="/admin" element={user?.role === 'admin' ? <Admin /> : <Navigate to="/" />} />
-              <Route path="/login" element={<Login />} />
-            </Routes>
-          </main>
-        </div>
-        <Toaster position="top-right" />
-      </div>
+      <Routes>
+        <Route path="/admin" element={<AdminLayout user={user} />}>
+          <Route index element={<Admin />} />
+        </Route>
+        <Route path="/admin/edit-page/:pageId" element={<AdminLayout user={user} />}>
+          <Route index element={<EditPageContent />} />
+        </Route>
+        <Route path="/*" element={
+          <div className="min-h-screen bg-gray-50 flex flex-col">
+            <Header user={user} />
+            <div className="flex flex-1 pt-16">
+              <Sidebar user={user} />
+              <main className="flex-1 p-4 md:p-6 ml-0 md:ml-64 transition-all duration-300">
+                <Routes>
+                  <Route path="/" element={<Home user={user} />} />
+                  <Route path="/product/:id" element={<ProductDetails />} />
+                  <Route path="/cart" element={<Cart />} />
+                  <Route path="/checkout" element={<Checkout user={user} />} />
+                  <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} />
+                  <Route path="/login" element={<Login />} />
+                </Routes>
+              </main>
+            </div>
+            <Footer />
+            <Toaster position="top-right" />
+          </div>
+        } />
+      </Routes>
     </Router>
   );
 }

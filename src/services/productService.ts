@@ -12,6 +12,7 @@ export const searchProducts = async (query: string): Promise<Product[]> => {
         {
           id: Math.random().toString(36).substr(2, 9),
           title: `Sourced: ${query}`,
+          description: 'Sourced product description',
           image: `https://picsum.photos/seed/${query}/400/400`,
           priceRMB: 100,
           priceBDT: convertRMBtoBDT(100),
@@ -31,6 +32,7 @@ export const getProductByUrl = async (url: string): Promise<Product | null> => {
   return {
     id: Math.random().toString(36).substr(2, 9),
     title: 'Imported Product from 1688',
+    description: 'Imported product description',
     image: 'https://picsum.photos/seed/imported/400/400',
     priceRMB: 150,
     priceBDT: convertRMBtoBDT(150),
